@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## 🚀 Overview
+## Overview
 
 This project provides an R implementation of an integrated framework for high-dimensional portfolio optimization. In modern financial markets, constructing a stable and robust portfolio is challenging due to the high dimensionality of assets and economic factors. This project addresses this by combining three powerful methodologies into a single, cohesive process:
 
@@ -14,27 +14,29 @@ The ultimate goal is to build more stable and well-diversified portfolios (e.g.,
 
 ---
 
-## 🔧 Project Structure
+## Project Structure
 
 The project is organized into modular R scripts orchestrated by a main script. This structure enhances readability, maintainability, and ease of execution.
 
+```
 .
-├── main.R
-├── scripts/
-│   ├── 1_data_preprocessing.R
-│   ├── 2_model_execution.R
-│   └── 3_portfolio_evaluation.R
-├── data/
-│   ├── raw/
-│   └── processed/
-└── results/
-├── model_outputs/
-└── portfolio_reports/
++-- main.R
++-- scripts/
+|   +-- 1_data_preprocessing.R
+|   +-- 2_model_execution.R
+|   \-- 3_portfolio_evaluation.R
++-- data/
+|   +-- raw/
+|   \-- processed/
+\-- results/
+    +-- model_outputs/
+    \-- portfolio_reports/
+```
 
 
 ---
 
-## 📈 Methodology & Implementation Steps
+## Methodology & Implementation Steps
 
 The implementation follows a clear 5-step pipeline, as outlined below.
 
@@ -72,7 +74,7 @@ The implementation follows a clear 5-step pipeline, as outlined below.
 
 ---
 
-## 📊 Dataset
+## Dataset
 
 The analysis will use a cross-asset dataset from **2015.01.01 to 2024.12.31**, covering approximately 70-80 series. Data will be sourced from public APIs and financial data providers like **Yahoo Finance** and **Investing.com**.
 
@@ -85,7 +87,7 @@ The analysis will use a cross-asset dataset from **2015.01.01 to 2024.12.31**, c
 
 ---
 
-## ✨ Expected Contributions
+## Expected Contributions
 
 * **Methodological Integration**: The primary contribution is the novel integration of LASSO, POET, and SAR into a unified framework for portfolio construction, jointly addressing predictor selection, factor structure, and network dependence.
 * **Financial Implications**: This framework is expected to yield more stable asset allocations, enhance tail-risk management (VaR/ES), and provide a clearer understanding of cross-asset diversification by capturing contagion effects.
@@ -93,7 +95,7 @@ The analysis will use a cross-asset dataset from **2015.01.01 to 2024.12.31**, c
 
 ---
 
-## 💡 How to Run
+## How to Run
 
 1.  **Clone the repository:**
     ```bash
