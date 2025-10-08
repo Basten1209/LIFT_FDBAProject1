@@ -216,30 +216,21 @@ if (inf_count > 0) {
   cat(sprintf("Warning: Found %d infinite values in log returns\n", inf_count))
 }
 
-# Standardize Returns ========================================================
-cat("\nStandardizing returns (mean = 0, std = 1)...\n")
+# Calculate basic statistics (no standardization)
+cat("\nCalculating return statistics...\n")
+means <- colMeans(log_returns, na.rm = TRUE)
+sds <- apply(log_returns, 2, sd, na.rm = TRUE)
 
-# Standardization formula: z = (x - μ) / σ
-# where μ is the mean and σ is the standard deviation
-standardized_returns <- scale(log_returns, center = TRUE, scale = TRUE)
-
-# Convert back to xts object (scale() returns a matrix)
-standardized_returns <- xts(standardized_returns, order.by = index(log_returns))
-
-# Verify standardization
-means <- colMeans(standardized_returns, na.rm = TRUE)
-sds <- apply(standardized_returns, 2, sd, na.rm = TRUE)
-
-cat(sprintf("Standardization check:\n"))
-cat(sprintf("  Mean of means: %.6f (should be ≈ 0)\n", mean(means)))
-cat(sprintf("  Mean of std devs: %.6f (should be ≈ 1)\n", mean(sds)))
+cat(sprintf("Return statistics:\n"))
+cat(sprintf("  Mean of means: %.6f (%.4f%% daily)\n", mean(means), mean(means) * 100))
+cat(sprintf("  Mean of std devs: %.6f (%.4f%% daily)\n", mean(sds), mean(sds) * 100))
 
 # Save Final Output ==========================================================
 cat("\nSaving processed returns to CSV...\n")
 
-# Convert xts to data frame for saving
-output_df <- data.frame(Date = index(standardized_returns), 
-                        coredata(standardized_returns))
+# Convert xts to data frame for saving (using original log returns, NOT standardized)
+output_df <- data.frame(Date = index(log_returns), 
+                        coredata(log_returns))
 
 # Save to CSV
 output_file <- file.path(processed_data_dir, "processed_returns.csv")
@@ -272,16 +263,16 @@ cat(sprintf("  Dimensions: %d rows × %d columns (including Date)\n",
 cat(paste0("\n", strrep("=", 60), "\n"))
 cat("DATA PREPROCESSING SUMMARY\n")
 cat(paste0(strrep("=", 60), "\n"))
-cat(sprintf("Total assets processed: %d\n", ncol(standardized_returns)))
+cat(sprintf("Total assets processed: %d\n", ncol(log_returns)))
 cat(sprintf("Date range: %s to %s\n", 
-            min(index(standardized_returns)), 
-            max(index(standardized_returns))))
-cat(sprintf("Total observations: %d\n", nrow(standardized_returns)))
+            min(index(log_returns)), 
+            max(index(log_returns))))
+cat(sprintf("Total observations: %d\n", nrow(log_returns)))
 cat(sprintf("Output file: %s\n", output_file))
 cat(paste0(strrep("=", 60), "\n"))
 cat("\nData preprocessing completed successfully!\n\n")
 
 # Optional: Display first few rows
-cat("First 5 rows of standardized returns:\n")
+cat("First 5 rows of log returns:\n")
 print(head(output_df, 5))
 
