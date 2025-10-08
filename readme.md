@@ -1,117 +1,78 @@
-# Integrated High-Dimensional Methods for Portfolio Optimization
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+### **코드 전체 구조 및 목표**
 
-## Overview
+이 코드의 최종 목표는 제안서(Proposal)에 명시된 대로 **LASSO, PCA(POET), 공간 자기회귀(SAR) 모델을 통합**하여, 고차원 금융 데이터에 적합한 **정교한 리스크 모델(공분산 행렬 `Sigma`)과 기대수익률 모델(`mu`)을 구축**하는 것입니다. 그리고 이를 바탕으로 **다양한 제약 조건(Gross Exposure) 하에서 최적의 포트폴리오를 구성**하고, 그 성과를 백테스팅하는 것입니다.
 
-This project provides an R implementation of an integrated framework for high-dimensional portfolio optimization. In modern financial markets, constructing a stable and robust portfolio is challenging due to the high dimensionality of assets and economic factors. This project addresses this by combining three powerful methodologies into a single, cohesive process:
+### **코드 작동 방식 상세 설명 (단계별)**
 
-1.  **LASSO Regression**: To select a sparse and meaningful set of macroeconomic factors from a vast number of potential predictors.
-2.  **POET (Principal Orthogonal Complement Thresholding)**: To estimate a large covariance matrix by separating the effects of systematic factors from idiosyncratic, sparse residual risks.
-3.  **Spatial Autoregression (SAR)**: To capture the network-based dependencies (e.g., financial contagion) that may still exist in the residuals, going beyond the simple sparsity assumption of POET.
+#### **1단계: 설정 및 데이터 준비**
 
-The ultimate goal is to build more stable and well-diversified portfolios (e.g., Global Minimum Variance, Mean-Variance Optimal) by leveraging a more accurate and robustly estimated covariance matrix.
+1.  **초기 설정:** 백테스팅에 필요한 기본 변수들을 설정합니다.
+    * `ROLLING_WINDOW_SIZE = 2000`: 과거 8년치(250일\*8년) 데이터를 사용하여 다음 날의 포트폴리오를 결정합니다.
+    * `GROSS_EXPOSURE_LEVELS`: 1.0부터 3.0까지 테스트할 총 포지션의 크기를 정합니다.
+    * `RISK_AVERSION = 0.5`: 평균-분산 최적화에서 '수익률 추구'와 '위험 회피' 사이의 균형을 맞추는 파라미터입니다.
 
----
+2.  **`macro_factor_names` 정의:** 이 부분이 모델의 핵심 전제입니다.
+    * `macro_factor_names <- c("BTC", "FTSE", "MSCI_World", "NASDAQ", "SP500")`
+    * **역할:** 전체 78개 자산 중, 이 **5개 자산을 시장 전체를 움직이는 '설명 변수(X)'로 지정**합니다.
+    * 따라서 나머지 73개 자산(`investable_asset_names`)은 이 5개 팩터에 의해 움직임이 '설명되는 변수(Y)'가 됩니다. **이 73개 자산이 실제 투자 대상입니다.**
 
-## Project Structure
+3.  **데이터 분리:** `all_data`에서 백테스팅 기간에 해당하는 `backtest_data`를 추출합니다.
 
-The project is organized into modular R scripts orchestrated by a main script. This structure enhances readability, maintainability, and ease of execution.
+#### **2단계: 백테스팅 루프 (하루하루 진행)**
 
-```
-.
-+-- main.R
-+-- scripts/
-|   +-- 1_data_preprocessing.R
-|   +-- 2_model_execution.R
-|   \-- 3_portfolio_evaluation.R
-+-- data/
-|   +-- raw/
-|   \-- processed/
-\-- results/
-    +-- model_outputs/
-    \-- portfolio_reports/
-```
+코드는 `for (t in 1:num_backtest_days)` 루프를 통해 2023년 1월 1일부터 하루씩 이동하며 다음의 과정을 매일 반복합니다.
 
+1.  **학습 데이터 구성:** 오늘(`today`) 포트폴리오를 결정하기 위해, 어제(`train_end_date`)까지의 데이터 중 **최근 2000일치(`ROLLING_WINDOW_SIZE`)**를 `train_data`로 가져옵니다.
+2.  이 `train_data`를 **73개 투자 자산의 수익률 데이터(`train_returns`)**와 **5개 거시 팩터의 수익률 데이터(`train_macros`)**로 분리합니다.
 
----
+#### **3단계: 통합 팩터 모델 구축 (제안서의 핵심 방법론)**
 
-## Methodology & Implementation Steps
+이제 2000일치 학습 데이터를 사용하여, 제안서에 나온 3단계 방법론으로 리스크와 기대수익률을 모델링합니다.
 
-The implementation follows a clear 5-step pipeline, as outlined below.
+* **Step 1. LASSO 회귀분석 (거시 팩터 모델링):**
+    * **목적:** 73개의 각 투자 자산(`Y`)이 5개의 거시 팩터(`X`)에 얼마나 민감하게 반응하는지(`B_lasso`, 베타 계수)를 알아냅니다. LASSO를 통해 불필요한 팩터의 영향력은 0으로 만들어 모델을 안정화시킵니다.
+    * **결과물:**
+        * `B_lasso`: 73x5 행렬. 각 자산이 어떤 거시 팩터에 얼마나 영향을 받는지 나타내는 '민감도' 행렬.
+        * `residuals_lasso`: 거시 팩터만으로는 설명되지 않고 남은 '찌꺼기 수익률'.
 
-### **Step 1: Data Aggregation and Preprocessing**
+* **Step 2. PCA 주성분 분석 (잠재 팩터 모델링):**
+    * **목적:** LASSO의 잔차(`residuals_lasso`)에 숨어있는 공통된 움직임, 즉 '잠재 팩터'(`F_latent`)를 찾아냅니다. 이는 거시 팩터 외에 시장에 존재하는 알려지지 않은 위험 요인(예: 특정 산업군의 동반 움직임)을 잡아내기 위함입니다. (POET 방법론의 핵심 아이디어)
+    * **결과물:**
+        * `F_latent`: 잠재 팩터들의 시계열 데이터.
+        * `B_latent`: 각 자산이 이 잠재 팩터들에 얼마나 민감한지를 나타내는 '민감도' 행렬.
+        * `residuals_pca`: 거시 팩터와 잠재 팩터로도 설명되지 않고 남은 '진짜 찌꺼기 수익률'.
 
-* **File**: `scripts/1_data_preprocessing.R`
-* **Goal**: The primary goal is to load, parse, and clean raw data from various sources with non-uniform formats, and to create a unified, analysis-ready dataset.
-* **Key Challenges & Process**:
-    1.  **Flexible Data Loading & Parsing**: The script must handle diverse `.csv` file structures, identifying key columns (e.g., 'Close' price) and parsing unstructured metadata.
-    2.  **Date Alignment and Imputation**: All time series must be aligned to a single master date index (e.g., U.S. trading days), with missing values handled via methods like forward-fill.
-    3.  **Data Transformation and Standardization**: The cleaned price data is used to calculate log returns, which are then tested for stationarity and standardized (mean 0, std 1).
-    4.  **Output**: The final dataset is saved as a single file (e.g., `processed_returns.csv`) in `data/processed/`.
+* **Step 3. 공간 자기회귀(SAR) 모델 (네트워크 효과 모델링):**
+    * **목적:** PCA의 잔차(`residuals_pca`)를 분석하여, 자산들 간의 '전염 효과' 또는 '네트워크 효과'를 모델링합니다. 특정 자산의 잔차 수익률이 상관관계가 높은 '이웃' 자산의 잔차 수익률에 영향을 받는지를 분석합니다.
+    * **결과물:**
+        * `rho_vec`: 각 자산이 이웃에게 얼마나 영향을 받는지를 나타내는 계수.
+        * `residuals_sar`: 모든 팩터(거시, 잠재, 네트워크)로 설명하고 남은 최종 '백색 소음(white noise)'에 가까운 잔차.
 
-### **Step 2: Macro Factor Selection with LASSO**
+#### **4단계: 통합 공분산 행렬(`Sigma`) 및 기대수익률(`mu`) 계산**
 
-* **File**: `scripts/2_model_execution.R`
-* **Process**: Apply **LASSO regression** to a wide range of macroeconomic predictors (e.g., CPI, interest rates) to select a sparse subset that best explains asset returns. This forms the observable macro-factor block, $f_{t}^{Macro}$.
+앞선 3단계 모델링의 결과를 모두 종합하여 포트폴리오 최적화에 필요한 두 가지 핵심 입력을 만듭니다.
 
-### **Step 3: Covariance Estimation with POET**
+1.  **`Sigma` (공분산 행렬, 리스크 모델):**
+    * 자산의 총 리스크는 **세 가지 원천**으로부터 온다고 보고, 이를 합산합니다.
+        1.  거시 팩터로 인한 리스크: `B_lasso %*% cov(train_macros) %*% t(B_lasso)`
+        2.  잠재 팩터로 인한 리스크: `B_latent %*% cov(F_latent) %*% t(B_latent)`
+        3.  네트워크 및 개별 요인 리스크: `cov(residuals_sar)`
+    * 이것이 바로 제안서에서 말한 **'통합된(Integrated)' 리스크 모델**입니다.
 
-* **File**: `scripts/2_model_execution.R`
-* **Process**: Model asset returns as a combination of the LASSO-selected macro factors and unobserved latent factors ($R_{t}=Bf_{t}+u_{t}$). Use PCA on the residuals to estimate latent factors and construct the **POET estimator**, which combines the factor covariance with a thresholded residual covariance matrix: $\hat{\Sigma}_{POET}=\hat{\Sigma}_{Factor}+\mathcal{T}_{\omega}(\hat{\Sigma}_{u})$.
+2.  **`mu` (기대수익률 모델):**
+    * 미래의 기대수익률은 **관측 가능한 팩터(거시, 잠재)들의 과거 평균 수익률**이 미래에도 이어질 것이라는 가정하에 예측합니다.
+    * `mu <- (B_lasso %*% colMeans(train_macros)) + (B_latent %*% colMeans(F_latent))`
 
-### **Step 4: Residual Network Modeling with Spatial AR**
+#### **5단계: 포트폴리오 최적화 및 결과 저장**
 
-* **File**: `scripts/2_model_execution.R`
-* **Process**: Apply a **Spatial AR model** ($u_{t}=\rho Wu_{t}+\epsilon_{t}$) to the idiosyncratic shocks ($u_t$) from the POET model. This captures structured network dependencies using a correlation-based weight matrix `W`, resulting in a more realistic, integrated covariance matrix $\hat{\Sigma}_{Integrated}$.
+1.  **최적화:** 계산된 `Sigma`와 `mu`를 이용해, 각 `GrossExposure` 제약 조건 하에서 **평균-분산 최적화**를 수행합니다.
+    * `objective <- Minimize(RISK_AVERSION * quad_form(w, Sigma) - t(mu) %*% w)`
+    * **의미:** 위험(`quad_form`)은 최소화하고 기대수익률(`t(mu) %*% w`)은 극대화하는 최적의 가중치 `w`를 찾습니다.
+2.  **결과 저장:** 계산된 최적의 가중치(`weights`)로 오늘 하루의 실제 수익률(`portfolio_return`)을 계산하고, 날짜, GE 수준, 수익률, 가중치를 `results_list`에 저장합니다.
 
-### **Step 5: Portfolio Optimization & Evaluation**
+#### **6단계: 최종 결과 분석 및 시각화**
 
-* **File**: `scripts/3_portfolio_evaluation.R`
-* **Process**:
-    1.  **Portfolio Construction**: Use the final integrated covariance estimator $\hat{\Sigma}_{Integrated}$ to construct several optimal portfolios: Global Minimum Variance (GMV), Mean-Variance Optimal, and Risk Budgeting.
-    2.  **Performance Analysis**: Evaluate the portfolios on stability, tail-risk metrics (VaR, ES), and diversification benefits.
-
----
-
-## Dataset
-
-The analysis will use a cross-asset dataset from **2015.01.01 to 2024.12.31**, covering approximately 70-80 series. Data will be sourced from public APIs and financial data providers like **Yahoo Finance** and **Investing.com**.
-
-* **Equities**: Global indices (S&P 500 and its sectoral indices, MSCI World) and major regional indices (Nikkei, KOSPI, etc.).
-* **Fixed Income**: U.S. Treasury yields, corporate bond spreads.
-* **Commodities**: Gold, Oil (Brent, WTI), industrial metals, agricultural futures.
-* **Currencies**: Major FX pairs against KRW (USDKRW, JPYKRW, EURKRW, CNYKRW).
-* **Cryptocurrencies**: Bitcoin (BTC).
-* **Volatility Measures & Macro Proxies**: VIX Index, Consumer Price Index (CPI), etc.
+백테스팅 루프가 모두 끝나면, 저장된 `results_list`를 데이터프레임으로 변환하여 기간별/GE 수준별 최종 성과(연환산 수익률, 리스크, 샤프 지수)를 계산하고 그래프로 출력합니다.
 
 ---
-
-## Expected Contributions
-
-* **Methodological Integration**: The primary contribution is the novel integration of LASSO, POET, and SAR into a unified framework for portfolio construction, jointly addressing predictor selection, factor structure, and network dependence.
-* **Financial Implications**: This framework is expected to yield more stable asset allocations, enhance tail-risk management (VaR/ES), and provide a clearer understanding of cross-asset diversification by capturing contagion effects.
-* **Pedagogical Value**: The project serves as a practical application connecting key concepts in financial big data analysis, including high-dimensional regression, factor models, and network econometrics.
-
----
-
-## How to Run
-
-1.  **Clone the repository:**
-    ```bash
-    git clone <your-repo-url>
-    cd <your-repo-name>
-    ```
-
-2.  **Install R Dependencies:**
-    Ensure you have R installed. Then, open an R console and install the required packages.
-    ```R
-    install.packages(c("glmnet", "zoo", "xts", "spdep", "PortfolioAnalytics", "lubridate"))
-    ```
-
-3.  **Run the Pipeline:**
-    Execute the main script from your terminal. This will run the entire process sequentially.
-    ```bash
-    Rscript main.R
-    ```
-    The script will generate processed data in `data/processed/`, model outputs in `results/model_outputs/`, and final portfolio reports in `results/portfolio_reports/`.
