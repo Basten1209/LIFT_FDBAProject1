@@ -1,78 +1,117 @@
+Integrated Proposal Idea 
 
-### **코드 전체 구조 및 목표**
+**Title** 
 
-이 코드의 최종 목표는 제안서(Proposal)에 명시된 대로 **LASSO, PCA(POET), 공간 자기회귀(SAR) 모델을 통합**하여, 고차원 금융 데이터에 적합한 **정교한 리스크 모델(공분산 행렬 `Sigma`)과 기대수익률 모델(`mu`)을 구축**하는 것입니다. 그리고 이를 바탕으로 **다양한 제약 조건(Gross Exposure) 하에서 최적의 포트폴리오를 구성**하고, 그 성과를 백테스팅하는 것입니다.
+**Integrated High-Dimensional Methods for Portfolio Optimization: Combining POET, Spatial Autoregression, and LASSO Regression** 
 
-### **코드 작동 방식 상세 설명 (단계별)**
+**1\. Introduction** 
 
-#### **1단계: 설정 및 데이터 준비**
+The challenge of high-dimensional data has become central in modern financial econometrics. With tens to hundreds of assets, macroeconomic indicators, and cross-market interactions, traditional mean–variance portfolio theory (Markowitz, 1952\) often fails due to unstable covariance estimation, omitted network dependencies, and the curse of dimensionality in regression models. 
 
-1.  **초기 설정:** 백테스팅에 필요한 기본 변수들을 설정합니다.
-    * `ROLLING_WINDOW_SIZE = 2000`: 과거 8년치(250일\*8년) 데이터를 사용하여 다음 날의 포트폴리오를 결정합니다.
-    * `GROSS_EXPOSURE_LEVELS`: 1.0부터 3.0까지 테스트할 총 포지션의 크기를 정합니다.
-    * `RISK_AVERSION = 0.5`: 평균-분산 최적화에서 '수익률 추구'와 '위험 회피' 사이의 균형을 맞추는 파라미터입니다.
+Three strands of methodology have emerged to address these challenges: 
 
-2.  **`macro_factor_names` 정의:** 이 부분이 모델의 핵심 전제입니다.
-    * `macro_factor_names <- c("BTC", "FTSE", "MSCI_World", "NASDAQ", "SP500")`
-    * **역할:** 전체 78개 자산 중, 이 **5개 자산을 시장 전체를 움직이는 '설명 변수(X)'로 지정**합니다.
-    * 따라서 나머지 73개 자산(`investable_asset_names`)은 이 5개 팩터에 의해 움직임이 '설명되는 변수(Y)'가 됩니다. **이 73개 자산이 실제 투자 대상입니다.**
+1\. **High-dimensional covariance estimation (POET; Fan, Liao & Mincheva, 2013):** 
 
-3.  **데이터 분리:** `all_data`에서 백테스팅 기간에 해당하는 `backtest_data`를 추출합니다.
+Factor decomposition plus sparse residual covariance to stabilize risk estimation. 
 
-#### **2단계: 백테스팅 루프 (하루하루 진행)**
+2\. **Spatial autoregression (SAR; Cliff & Ord, 1981; Baltagi et al., 2014):** 
 
-코드는 `for (t in 1:num_backtest_days)` 루프를 통해 2023년 1월 1일부터 하루씩 이동하며 다음의 과정을 매일 반복합니다.
+Capturing cross-sectional and network dependence structures among assets or markets. 
 
-1.  **학습 데이터 구성:** 오늘(`today`) 포트폴리오를 결정하기 위해, 어제(`train_end_date`)까지의 데이터 중 **최근 2000일치(`ROLLING_WINDOW_SIZE`)**를 `train_data`로 가져옵니다.
-2.  이 `train_data`를 **73개 투자 자산의 수익률 데이터(`train_returns`)**와 **5개 거시 팩터의 수익률 데이터(`train_macros`)**로 분리합니다.
+3\. **Regularized regression (LASSO; Tibshirani, 1996):** Sparse selection of predictors from a high-dimensional set of macroeconomic and financial variables.  
+While these methods have been studied separately, we propose a unified framework that integrates **LASSO for factor selection, POET for covariance estimation, and Spatial AR for network dependence**. This integration allows for robust portfolio construction that accounts for latent and observable factors, cross-asset contagion, and parsimonious predictive structures. 
 
-#### **3단계: 통합 팩터 모델 구축 (제안서의 핵심 방법론)**
+**2\. Methodological Framework** 
 
-이제 2000일치 학습 데이터를 사용하여, 제안서에 나온 3단계 방법론으로 리스크와 기대수익률을 모델링합니다.
+**2.1. Step 1: Macro-Factor Selection via LASSO** 
 
-* **Step 1. LASSO 회귀분석 (거시 팩터 모델링):**
-    * **목적:** 73개의 각 투자 자산(`Y`)이 5개의 거시 팩터(`X`)에 얼마나 민감하게 반응하는지(`B_lasso`, 베타 계수)를 알아냅니다. LASSO를 통해 불필요한 팩터의 영향력은 0으로 만들어 모델을 안정화시킵니다.
-    * **결과물:**
-        * `B_lasso`: 73x5 행렬. 각 자산이 어떤 거시 팩터에 얼마나 영향을 받는지 나타내는 '민감도' 행렬.
-        * `residuals_lasso`: 거시 팩터만으로는 설명되지 않고 남은 '찌꺼기 수익률'.
+We consider a large set of potential macroeconomic and market predictors (e.g., interest rates, exchange rates, volatility indices, credit spreads, commodity benchmarks). To avoid overfitting and spurious correlations, we apply LASSO regression: 
 
-* **Step 2. PCA 주성분 분석 (잠재 팩터 모델링):**
-    * **목적:** LASSO의 잔차(`residuals_lasso`)에 숨어있는 공통된 움직임, 즉 '잠재 팩터'(`F_latent`)를 찾아냅니다. 이는 거시 팩터 외에 시장에 존재하는 알려지지 않은 위험 요인(예: 특정 산업군의 동반 움직임)을 잡아내기 위함입니다. (POET 방법론의 핵심 아이디어)
-    * **결과물:**
-        * `F_latent`: 잠재 팩터들의 시계열 데이터.
-        * `B_latent`: 각 자산이 이 잠재 팩터들에 얼마나 민감한지를 나타내는 '민감도' 행렬.
-        * `residuals_pca`: 거시 팩터와 잠재 팩터로도 설명되지 않고 남은 '진짜 찌꺼기 수익률'.
+^β \= arg min   
+β∥y − Xβ∥22 \+ λ∥β∥1 
 
-* **Step 3. 공간 자기회귀(SAR) 모델 (네트워크 효과 모델링):**
-    * **목적:** PCA의 잔차(`residuals_pca`)를 분석하여, 자산들 간의 '전염 효과' 또는 '네트워크 효과'를 모델링합니다. 특정 자산의 잔차 수익률이 상관관계가 높은 '이웃' 자산의 잔차 수익률에 영향을 받는지를 분석합니다.
-    * **결과물:**
-        * `rho_vec`: 각 자산이 이웃에게 얼마나 영향을 받는지를 나타내는 계수.
-        * `residuals_sar`: 모든 팩터(거시, 잠재, 네트워크)로 설명하고 남은 최종 '백색 소음(white noise)'에 가까운 잔차.
+where y is the asset return or factor proxy, and X is the predictor matrix. LASSO selects a sparse subset of variables, forming the observed macro-finance factor block f Macro   
+t. 
 
-#### **4단계: 통합 공분산 행렬(`Sigma`) 및 기대수익률(`mu`) 계산**
+**2.2. Step 2: Covariance Estimation via POET** The p-dimensional excess returns Rt are modeled as: Rt \= Bft \+ ut 
 
-앞선 3단계 모델링의 결과를 모두 종합하여 포트폴리오 최적화에 필요한 두 가지 핵심 입력을 만듭니다.
+where ft \= (f Macro   
+t, fLatent   
+t ) includes both selected macro factors and 
 
-1.  **`Sigma` (공분산 행렬, 리스크 모델):**
-    * 자산의 총 리스크는 **세 가지 원천**으로부터 온다고 보고, 이를 합산합니다.
-        1.  거시 팩터로 인한 리스크: `B_lasso %*% cov(train_macros) %*% t(B_lasso)`
-        2.  잠재 팩터로 인한 리스크: `B_latent %*% cov(F_latent) %*% t(B_latent)`
-        3.  네트워크 및 개별 요인 리스크: `cov(residuals_sar)`
-    * 이것이 바로 제안서에서 말한 **'통합된(Integrated)' 리스크 모델**입니다.
+latent statistical factors. The covariance decomposes as: Σ \= BΣfB⊤ \+ Σu 
 
-2.  **`mu` (기대수익률 모델):**
-    * 미래의 기대수익률은 **관측 가능한 팩터(거시, 잠재)들의 과거 평균 수익률**이 미래에도 이어질 것이라는 가정하에 예측합니다.
-    * `mu <- (B_lasso %*% colMeans(train_macros)) + (B_latent %*% colMeans(F_latent))`
+We estimate this via the **POET estimator**: 
 
-#### **5단계: 포트폴리오 최적화 및 결과 저장**
+Σ^POET \= Σ^Factor \+ Tω(Σ^u)  
+where Σ^Factor is obtained by PCA on residual returns (after macro factors) and Tω applies adaptive thresholding to enforce sparsity in Σ^u. 
 
-1.  **최적화:** 계산된 `Sigma`와 `mu`를 이용해, 각 `GrossExposure` 제약 조건 하에서 **평균-분산 최적화**를 수행합니다.
-    * `objective <- Minimize(RISK_AVERSION * quad_form(w, Sigma) - t(mu) %*% w)`
-    * **의미:** 위험(`quad_form`)은 최소화하고 기대수익률(`t(mu) %*% w`)은 극대화하는 최적의 가중치 `w`를 찾습니다.
-2.  **결과 저장:** 계산된 최적의 가중치(`weights`)로 오늘 하루의 실제 수익률(`portfolio_return`)을 계산하고, 날짜, GE 수준, 수익률, 가중치를 `results_list`에 저장합니다.
+**2.3. Step 3: Residual Network Dependence via Spatial AR** 
 
-#### **6단계: 최종 결과 분석 및 시각화**
+While POET assumes sparsity in the idiosyncratic covariance Σu, empirical evidence suggests that **idiosyncratic shocks may propagate via network spillovers** (e.g., financial contagion, sectoral interdependence). We model this via a **Spatial AR** process: 
 
-백테스팅 루프가 모두 끝나면, 저장된 `results_list`를 데이터프레임으로 변환하여 기간별/GE 수준별 최종 성과(연환산 수익률, 리스크, 샤프 지수)를 계산하고 그래프로 출력합니다.
+ut \= ρWut \+ εt 
 
----
+where W is a pre-specified or estimated spatial weight matrix (e.g., correlation-based, geographic, or sectoral linkage). This step allows us to go beyond unstructured sparsity and capture structured dependencies among residuals. 
+
+**2.4. Step 4: Portfolio Optimization** 
+
+With the integrated covariance estimator Σ^Integrated combining POET and Spatial AR adjustments, and with expected returns μ^ informed by LASSO-selected macro predictors, we construct portfolios: 
+
+**Global Minimum Variance (GMV):** 
+
+wGMV \=Σ^ −11   
+1⊤Σ^ −11 
+
+**Mean-Variance Optimal Portfolio:** 
+
+wMV \=Σ^ −1μ^   
+1⊤Σ^ −1μ^ 
+
+**Risk Budgeting Portfolio:** 
+
+Equalizing marginal contributions to risk subject to ℓ1 gross exposure constraints.  
+**3\. Data and Implementation** 
+
+We employ a cross-asset dataset (2015.01.01–2024.12.31) spanning approximately 70–80 series: 
+
+**Equities:** Global indices (S\&P 500, MSCI World, Nikkei, KOSPI, DAX). 
+
+**Fixed Income:** U.S. Treasury yields, corporate bond spreads. **Commodities:** Gold, oil, industrial metals, agricultural futures. **Currencies:** USD, JPY, EUR, CNY, KRW. 
+
+**Cryptocurrencies:** Bitcoin, Ethereum, XRP. 
+
+**Volatility Measures:** VIX. 
+
+Steps include frequency harmonization, return computation, stationarity testing, and standardization. LASSO-selected macro factors are combined with PCA-based latent factors in POET. Residuals are modeled with Spatial AR using correlation-based network matrices. 
+
+**4\. Expected Contributions** 
+
+1\. **Methodological Integration** 
+
+First to integrate **POET \+ Spatial AR \+ LASSO** into a unified framework. 
+
+Provides joint treatment of **factor structure, network dependence, and predictor selection** in high-dimensional finance. 
+
+2\. **Financial Implications** 
+
+**Portfolio stability:** More stable allocations under gross exposure constraints. 
+
+**Tail-risk management:** Improved VaR and ES performance during crises. 
+
+**Cross-asset diversification:** Capturing contagion and cross market linkages for multi-asset allocation.  
+3\. **Pedagogical Value** 
+
+Directly connects to high-dimensional regression, factor models, sparsity, and network econometrics as taught in Financial Big Data Analysis courses. 
+
+**5\. References** 
+
+Bai, J., & Ng, S. (2002). Determining the number of factors in approximate factor models. *Econometrica, 70*(1), 191–221. Bickel, P. J., & Levina, E. (2008). Covariance regularization by thresholding. *Annals of Statistics, 36*(6), 2577–2604. Brodie, J., Daubechies, I., De Mol, C., Giannone, D., & Loris, I. (2009). Sparse and stable Markowitz portfolios. *PNAS, 106*(30), 12267–12272. 
+
+Cliff, A., & Ord, J. (1981). *Spatial Processes: Models & Applications.* Pion. 
+
+DeMiguel, V., Garlappi, L., & Uppal, R. (2009). Optimal versus naive diversification: How inefficient is the 1/N portfolio strategy? *RFS, 22*(5), 1915–1953. 
+
+Fan, J., Liao, Y., & Mincheva, M. (2013). Large covariance estimation by thresholding principal orthogonal complements. *JRSSB, 75*(4), 603–680. 
+
+Ledoit, O., & Wolf, M. (2004). Honey, I shrunk the sample covariance matrix. *J. Multivariate Analysis, 91*(1), 1–18. Tibshirani, R. (1996). Regression shrinkage and selection via the lasso. *J. Royal Statistical Society: Series B, 58*(1), 267–288.
