@@ -103,7 +103,7 @@ for i in tqdm(range(loop_start_index, end_loc)):
     # 2. 파이프라인 생성 및 학습 (매일 새로운 데이터로 재학습)
     pipeline = Pipeline([
         ('scaler', StandardScaler()),
-        ('lasso', LassoCV(cv=5, random_state=42, n_jobs=-1, tol=1e-3, max_iter=2000)) # cv=5로 조정
+        ('lasso', LassoCV(cv=5, random_state=42, n_jobs=-1, tol=1e-3, max_iter=10000)) # cv=5로 조정
     ])
     pipeline.fit(window_X, window_y)
 
@@ -280,7 +280,7 @@ X = X.fillna(0)
 # --- POET 파라미터 설정 ---
 window_size = 500
 # PCA를 통해 추출할 factor의 개수. 이는 하이퍼파라미터로 조정 가능합니다.
-n_factors = 5
+n_factors = 2
 # POET을 적용하기 위한 최소 자산 개수
 min_assets_for_poet = n_factors + 1
 
@@ -397,7 +397,7 @@ X = X.fillna(0)
 
 # --- 파라미터 설정 ---
 window_size = 500
-n_factors = 5 # POET-only 모델용 팩터 개수
+n_factors = 2 # POET-only 모델용 팩터 개수
 
 
 # --- 결과를 저장할 변수 초기화 ---
@@ -545,7 +545,7 @@ def calculate_gmv_weights(cov_matrix, asset_names, gross_exposure_limit):
 
 # --- 2. 백테스팅 및 성과 분석 루프 ---
 
-gross_exposure_levels = [1.0, 1.5, 2.0, 2.5, 3.0]
+gross_exposure_levels = [1.0, 1.1, 1.2, 1.3, 1.4, 1.5]
 test_years = [2022, 2023, 2024]
 all_results = []
 
@@ -646,7 +646,8 @@ for metric in metrics_to_plot:
         markersize=8,
         linewidth=2.5,
         height=5, # 각 서브플롯의 높이
-        aspect=1.2 # 각 서브플롯의 가로세로 비율
+        aspect=0.6, # 각 서브플롯의 가로세로 비율
+        facet_kws={'sharey': False}
     )
 
     # 전체 Plot에 대한 제목 및 레이블 설정
