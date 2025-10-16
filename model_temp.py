@@ -21,7 +21,7 @@ except FileNotFoundError:
 
 # Macro Factor로 사용할 자산들을 리스트로 지정합니다.
 # S&P500 -> SPY, DowJones -> DIA, Nasdaq -> NASDAQ 으로 데이터 컬럼명에 맞게 지정했습니다.
-macro_factor_assets = ['SPY', 'NASDAQ', 'DIA', 'MSCI_World']
+macro_factor_assets = ['SPY', 'NASDAQ', 'DIA']
 
 # 지정된 모든 자산이 데이터에 존재하는지 확인합니다.
 missing_assets = [asset for asset in macro_factor_assets if asset not in log_return_df.columns]
@@ -47,7 +47,7 @@ from sklearn.linear_model import LassoCV
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 from tqdm import tqdm # 진행 상황을 시각적으로 보여주는 라이브러리
-import numpy as np
+
 
 # 이 셀은 1, 2단계가 포함된 'step_1_2_data_prep.py' 파일의 셀을
 # 실행한 후에 실행해야 합니다. (X, y 변수 필요)
@@ -63,7 +63,7 @@ print("결측치를 0으로 모두 채웠습니다.")
 
 
 # --- 롤링 윈도우 파라미터 설정 ---
-window_size = 500  # 윈도우 크기를 500일로 수정
+window_size = 250  # 윈도우 크기를 500일로 수정
 test_start_date = '2022-01-01'
 test_end_date = '2024-12-31'
 
@@ -144,7 +144,7 @@ else:
 
 #%% --- 4단계: 선택된 자산의 일별 계층적 군집 분석 ---
 import pandas as pd
-import numpy as np
+
 from scipy.cluster.hierarchy import linkage, fcluster
 from scipy.spatial.distance import pdist
 from tqdm import tqdm
@@ -173,7 +173,7 @@ X = X.fillna(0)
 
 # --- 클러스터링 파라미터 설정 ---
 # 롤링 윈도우 크기는 LASSO와 동일하게 설정
-window_size = 500
+window_size = 250
 # 클러스터링을 위한 최소 자산 개수 (이 개수 미만이면 클러스터링 의미 없음)
 min_assets_for_clustering = 3
 # linkage에서 사용할 거리 기준. 'ward'는 분산 기반으로 군집을 묶어 성능이 좋음.
@@ -251,7 +251,7 @@ else:
     print(f"\n✅ 일별 자산 클러스터 목록이 '{output_path}' 파일로 저장되었습니다.")
 #%% --- 5단계: 클러스터링 기반 POET 공분산 추정 ---
 import pandas as pd
-import numpy as np
+
 from sklearn.decomposition import PCA
 from tqdm import tqdm
 import ast
@@ -278,9 +278,9 @@ X = X.fillna(0)
 
 
 # --- POET 파라미터 설정 ---
-window_size = 500
+window_size = 250
 # PCA를 통해 추출할 factor의 개수. 이는 하이퍼파라미터로 조정 가능합니다.
-n_factors = 2
+n_factors = 3
 # POET을 적용하기 위한 최소 자산 개수
 min_assets_for_poet = n_factors + 1
 
@@ -396,8 +396,8 @@ X = X.fillna(0)
 
 
 # --- 파라미터 설정 ---
-window_size = 500
-n_factors = 2 # POET-only 모델용 팩터 개수
+window_size = 250
+n_factors = 3 # POET-only 모델용 팩터 개수
 
 
 # --- 결과를 저장할 변수 초기화 ---
@@ -510,42 +510,53 @@ for name in model_names:
         raise FileNotFoundError(f"결과 파일 '{file_names[name]}'을 찾을 수 없습니다. 이전 단계를 먼저 실행해주세요.")
 
 
-# --- 1. 포트폴리오 최적화 함수 정의 ---
+# --- 1. 포트폴리오 최적화 함수 정의 (수정된 버전) ---
 
 def calculate_gmv_weights(cov_matrix, asset_names, gross_exposure_limit):
     """
     주어진 공분산 행렬과 제약조건 하에서 GMV 가중치를 계산합니다.
+    (w = w_pos - w_neg 트릭을 사용하여 안정성 확보)
     """
     num_assets = cov_matrix.shape[0]
 
-    # 목적 함수: 포트폴리오 분산
-    def portfolio_variance(weights):
-        return weights.T @ cov_matrix @ weights
+    # 최적화 변수는 [w_pos_1, ..., w_pos_n, w_neg_1, ..., w_neg_n] 형태
+    def portfolio_variance(weights_extended):
+        # w_pos와 w_neg를 분리하여 실제 가중치 w를 재구성
+        w_pos = weights_extended[:num_assets]
+        w_neg = weights_extended[num_assets:]
+        w = w_pos - w_neg
+        return w.T @ cov_matrix @ w
 
-    # 제약조건
+    # 제약조건: abs() 없이 선형으로 표현
     constraints = [
-        {'type': 'eq', 'fun': lambda w: np.sum(w) - 1}, # Net Exposure = 1
-        {'type': 'ineq', 'fun': lambda w: gross_exposure_limit - np.sum(np.abs(w))} # Gross Exposure
+        # Net Exposure: sum(w_pos) - sum(w_neg) = 1
+        {'type': 'eq', 'fun': lambda w_ext: np.sum(w_ext[:num_assets]) - np.sum(w_ext[num_assets:]) - 1},
+        # Gross Exposure: sum(w_pos) + sum(w_neg) = limit
+        {'type': 'eq', 'fun': lambda w_ext: np.sum(w_ext[:num_assets]) + np.sum(w_ext[num_assets:]) - gross_exposure_limit}
     ]
-    # 가중치 범위 (-limit ~ +limit)
-    bounds = tuple((-gross_exposure_limit, gross_exposure_limit) for _ in range(num_assets))
-    # 초기 추정 가중치 (균등 배분)
-    initial_weights = np.array([1/num_assets] * num_assets)
+    
+    # 가중치 범위: w_pos와 w_neg 모두 0 이상
+    bounds = tuple((0, gross_exposure_limit) for _ in range(2 * num_assets))
+    
+    # 초기 추정 가중치: 2n 크기
+    # Long-only, Net=1, Gross=1 포지션으로 시작
+    initial_weights_extended = np.array([1/num_assets] * num_assets + [0] * num_assets)
 
     # 최적화 실행
-    result = minimize(portfolio_variance, initial_weights, method='SLSQP',
+    result = minimize(portfolio_variance, initial_weights_extended, method='SLSQP',
                       bounds=bounds, constraints=constraints, tol=1e-9)
 
     if not result.success:
-        # 최적화 실패 시, 0으로 채운 가중치 반환
         return pd.Series(np.zeros(num_assets), index=asset_names)
 
-    return pd.Series(result.x, index=asset_names)
+    # 최종 가중치 w = w_pos - w_neg 로 재구성하여 반환
+    final_weights = result.x[:num_assets] - result.x[num_assets:]
+    return pd.Series(final_weights, index=asset_names)
 
 
 # --- 2. 백테스팅 및 성과 분석 루프 ---
 
-gross_exposure_levels = [1.0, 1.1, 1.2, 1.3, 1.4, 1.5]
+gross_exposure_levels = [1.0, 1.5, 2.0, 2.5, 3.0]
 test_years = [2022, 2023, 2024]
 all_results = []
 
@@ -600,60 +611,50 @@ for year in test_years:
             else:
                  performance_summary[model_name] = {key: 0 for key in ['Annualized Return (%)', 'Annualized Risk (%)', 'Sharpe Ratio']}
         
-        # 결과 저장 (수정된 부분)
-        results_df = pd.DataFrame(performance_summary).T.assign(
-            **{'Gross Exposure': limit, 'Year': year}
-        )
+        # 결과 저장
+        results_df = pd.DataFrame(performance_summary).T
+        results_df['Gross Exposure'] = limit
+        results_df['Year'] = year
         all_results.append(results_df)
 
 print("\n✅ 모든 분석이 완료되었습니다!")
 
 # --- 3. 최종 결과 출력 ---
-# 모든 결과를 하나의 데이터프레임으로 합칩니다.
 final_summary_df = pd.concat(all_results)
-# 인덱스였던 모델명을 'Model' 컬럼으로 변환합니다.
 final_summary_df = final_summary_df.reset_index().rename(columns={'index': 'Model'})
 
 print("\n\n--- 최종 성과 비교 요약 ---")
-# 출력을 위해 임시로 멀티 인덱스를 설정하여 보기 좋게 만듭니다.
-# 이 과정은 final_summary_df 원본을 변경하지 않습니다.
 print(final_summary_df.set_index(['Year', 'Gross Exposure', 'Model']).to_string(float_format="%.2f"))
 
 
-# --- 4. 최종 결과 시각화 ---
+#%% --- 4. 최종 결과 시각화 ---
 print("\n\n--- 최종 성과 시각화 ---")
 
-# 시각화를 위한 데이터프레임으로 final_summary_df를 그대로 사용합니다.
-# 이 데이터프레임에는 'Year', 'Model' 등이 모두 컬럼으로 존재합니다.
 plot_df = final_summary_df
 
-# 시각화할 평가지표 리스트
 metrics_to_plot = ['Annualized Risk (%)', 'Annualized Return (%)', 'Sharpe Ratio']
 
-# 각 평가지표에 대해 연도별 서브플롯 생성
 for metric in metrics_to_plot:
     plt.style.use('seaborn-v0_8-whitegrid')
     
-    # relplot으로 연도별 서브플롯(facet grid) 생성
     g = sns.relplot(
         data=plot_df,
         x='Gross Exposure',
         y=metric,
         hue='Model',
-        col='Year', # 이 옵션이 연도별로 플롯을 나눔
+        col='Year',
         kind='line',
         marker='o',
         markersize=8,
         linewidth=2.5,
-        height=5, # 각 서브플롯의 높이
-        aspect=0.6, # 각 서브플롯의 가로세로 비율
+        height=5,
+        aspect=0.6,
         facet_kws={'sharey': False}
     )
 
-    # 전체 Plot에 대한 제목 및 레이블 설정
     g.fig.suptitle(f'{metric} by Gross Exposure Constraint (Yearly)', fontsize=16, fontweight='bold', y=1.03)
     g.set_axis_labels('Gross Exposure Limit', metric)
-    g.set_titles("Year: {col_name}") # 각 서브플롯의 제목
+    g.set_titles("Year: {col_name}")
     g.tight_layout(w_pad=1)
     
     plt.show()
