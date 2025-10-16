@@ -371,6 +371,7 @@ else:
 import pandas as pd
 import numpy as np
 from sklearn.decomposition import PCA
+from sklearn.covariance import LedoitWolf # Ledoit-Wolf Shrinkage 임포트
 from tqdm import tqdm
 import ast
 import pickle
@@ -403,7 +404,7 @@ n_factors = 3 # POET-only 모델용 팩터 개수
 # --- 결과를 저장할 변수 초기화 ---
 daily_cov_lasso_only = {}
 daily_cov_poet_only = {}
-daily_cov_ols = {} # 'sample'에서 'ols'로 변수명 변경
+daily_cov_ols_shrinkage = {} # 변수명 변경
 
 
 # --- 롤링 윈도우 루프 실행 ---
@@ -417,9 +418,7 @@ for date, lasso_assets in tqdm(selected_assets_series.items()):
         window_start_loc = window_end_loc - window_size
         if window_start_loc < 0: continue
 
-        # 전체 자산에 대한 윈도우 데이터
         window_X_all = X.iloc[window_start_loc:window_end_loc]
-        # LASSO 선택 자산에 대한 윈도우 데이터
         window_X_lasso = window_X_all[lasso_assets]
 
     except KeyError:
@@ -432,9 +431,12 @@ for date, lasso_assets in tqdm(selected_assets_series.items()):
         cov_lasso_only = window_X_lasso.cov().values
         daily_cov_lasso_only[date] = pd.DataFrame(cov_lasso_only, index=lasso_assets, columns=lasso_assets)
 
-    # [모델 D: OLS Model (표준 공분산)] - 모델명 변경
-    cov_ols = window_X_all.cov().values
-    daily_cov_ols[date] = pd.DataFrame(cov_ols, index=all_assets, columns=all_assets)
+    # --- 핵심 수정 사항: OLS 모델에 Shrinkage 적용 ---
+    # [모델 D: OLS (Shrinkage) Model]
+    lw = LedoitWolf()
+    lw.fit(window_X_all)
+    cov_ols_shrinkage = lw.covariance_
+    daily_cov_ols_shrinkage[date] = pd.DataFrame(cov_ols_shrinkage, index=all_assets, columns=all_assets)
 
     # [모델 C: POET-only Model]
     if len(all_assets) > n_factors:
@@ -446,7 +448,7 @@ for date, lasso_assets in tqdm(selected_assets_series.items()):
 
         reconstructed = pca.inverse_transform(factor_returns)
         residuals = window_X_all - reconstructed
-        cov_idiosyncratic = np.diag(np.diag(np.cov(residuals, rowvar=False))) # 잔차 공분산은 대각행렬만 사용
+        cov_idiosyncratic = np.diag(np.diag(np.cov(residuals, rowvar=False)))
 
         cov_poet_only = cov_factor + cov_idiosyncratic
         daily_cov_poet_only[date] = pd.DataFrame(cov_poet_only, index=all_assets, columns=all_assets)
@@ -459,7 +461,7 @@ print("✅ 벤치마크 모델들의 일별 공분산 행렬 추정 완료!")
 output_paths = {
     'lasso_only': 'daily_lasso_only_covariances_2022_2024.pkl',
     'poet_only': 'daily_poet_only_covariances_2022_2024.pkl',
-    'ols': 'daily_ols_covariances_2022_2024.pkl' # 'sample'에서 'ols'로 키 및 파일명 변경
+    'ols_shrinkage': 'daily_ols_shrinkage_covariances_2022_2024.pkl' # 파일명 변경
 }
 
 with open(output_paths['lasso_only'], 'wb') as f:
@@ -470,9 +472,10 @@ with open(output_paths['poet_only'], 'wb') as f:
     pickle.dump(daily_cov_poet_only, f)
 print(f"✅ POET-only 모델 공분산이 '{output_paths['poet_only']}' 파일로 저장되었습니다.")
 
-with open(output_paths['ols'], 'wb') as f:
-    pickle.dump(daily_cov_ols, f)
-print(f"✅ OLS 모델 공분산이 '{output_paths['ols']}' 파일로 저장되었습니다.")
+with open(output_paths['ols_shrinkage'], 'wb') as f:
+    pickle.dump(daily_cov_ols_shrinkage, f)
+print(f"✅ OLS (Shrinkage) 모델 공분산이 '{output_paths['ols_shrinkage']}' 파일로 저장되었습니다.")
+
 
 #%% --- 7단계: 포트폴리오 최적화 및 최종 성과 분석 ---
 import pandas as pd
@@ -491,14 +494,14 @@ if 'X' not in locals():
      raise NameError("원본 수익률 데이터 X를 찾을 수 없습니다. step_1_2_data_prep.py를 먼저 실행해주세요.")
 X = X.fillna(0) # 결측치 처리
 
-# 5, 6단계에서 저장한 공분산 행렬 딕셔너리 로드
+# --- 핵심 수정 사항: 모델명 및 파일명 변경 ---
 model_covariances = {}
-model_names = ['Integrated', 'LASSO-only', 'POET-only', 'OLS']
+model_names = ['Integrated', 'LASSO-only', 'POET-only', 'OLS (Shrinkage)']
 file_names = {
     'Integrated': 'daily_integrated_model_covariances_2022_2024.pkl',
     'LASSO-only': 'daily_lasso_only_covariances_2022_2024.pkl',
     'POET-only': 'daily_poet_only_covariances_2022_2024.pkl',
-    'OLS': 'daily_ols_covariances_2022_2024.pkl'
+    'OLS (Shrinkage)': 'daily_ols_shrinkage_covariances_2022_2024.pkl'
 }
 
 for name in model_names:
@@ -515,49 +518,72 @@ for name in model_names:
 def calculate_gmv_weights(cov_matrix, asset_names, gross_exposure_limit):
     """
     주어진 공분산 행렬과 제약조건 하에서 GMV 가중치를 계산합니다.
-    (w = w_pos - w_neg 트릭을 사용하여 안정성 확보)
+    (w = w_pos - w_neg 트릭과 추가 정규화를 사용하여 안정성 확보)
     """
     num_assets = cov_matrix.shape[0]
 
+    # --- 핵심 수정 사항: 추가 정규화로 수치적 안정성 확보 ---
+    # 공분산 행렬의 대각 성분에 아주 작은 값을 더해줍니다.
+    lambda_reg = 1e-8 # 정규화 강도 (작은 양수)
+    cov_matrix_reg = cov_matrix + lambda_reg * np.eye(num_assets)
+
     # 최적화 변수는 [w_pos_1, ..., w_pos_n, w_neg_1, ..., w_neg_n] 형태
     def portfolio_variance(weights_extended):
-        # w_pos와 w_neg를 분리하여 실제 가중치 w를 재구성
         w_pos = weights_extended[:num_assets]
         w_neg = weights_extended[num_assets:]
         w = w_pos - w_neg
-        return w.T @ cov_matrix @ w
+        # 안정화된 공분산 행렬 사용
+        return w.T @ cov_matrix_reg @ w
 
-    # 제약조건: abs() 없이 선형으로 표현
+    # 제약조건
     constraints = [
-        # Net Exposure: sum(w_pos) - sum(w_neg) = 1
         {'type': 'eq', 'fun': lambda w_ext: np.sum(w_ext[:num_assets]) - np.sum(w_ext[num_assets:]) - 1},
-        # Gross Exposure: sum(w_pos) + sum(w_neg) = limit
         {'type': 'eq', 'fun': lambda w_ext: np.sum(w_ext[:num_assets]) + np.sum(w_ext[num_assets:]) - gross_exposure_limit}
     ]
     
-    # 가중치 범위: w_pos와 w_neg 모두 0 이상
     bounds = tuple((0, gross_exposure_limit) for _ in range(2 * num_assets))
-    
-    # 초기 추정 가중치: 2n 크기
-    # Long-only, Net=1, Gross=1 포지션으로 시작
     initial_weights_extended = np.array([1/num_assets] * num_assets + [0] * num_assets)
 
-    # 최적화 실행
     result = minimize(portfolio_variance, initial_weights_extended, method='SLSQP',
                       bounds=bounds, constraints=constraints, tol=1e-9)
 
     if not result.success:
+        # 이 부분이 실행될 확률이 현저히 낮아집니다.
         return pd.Series(np.zeros(num_assets), index=asset_names)
 
-    # 최종 가중치 w = w_pos - w_neg 로 재구성하여 반환
     final_weights = result.x[:num_assets] - result.x[num_assets:]
     return pd.Series(final_weights, index=asset_names)
 
+def calculate_covariance_loss(realized_cov, forecast_cov):
+    """
+    실현 공분산과 예측 공분산 간의 MSPE와 QLIKE를 계산합니다.
+    """
+    common_assets = realized_cov.index.intersection(forecast_cov.index)
+    realized = realized_cov.loc[common_assets, common_assets].values
+    forecast = forecast_cov.loc[common_assets, common_assets].values
+
+    if realized.shape != forecast.shape or realized.shape[0] < 1:
+        return np.nan, np.nan
+
+    mspe = np.sum((realized - forecast)**2)
+
+    try:
+        inv_forecast = np.linalg.inv(forecast)
+        trace_term = np.trace(realized @ inv_forecast)
+        log_det_term = np.linalg.slogdet(realized @ inv_forecast)[1]
+        qlike = trace_term - log_det_term - len(common_assets)
+    except np.linalg.LinAlgError:
+        qlike = np.nan
+
+    return mspe, qlike
 
 # --- 2. 백테스팅 및 성과 분석 루프 ---
 
-gross_exposure_levels = [1.0, 1.5, 2.0, 2.5, 3.0]
+gross_exposure_levels = [1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0]
 test_years = [2022, 2023, 2024]
+all_results = []
+
+forecast_horizon = 1
 all_results = []
 
 print("\n백테스팅 및 성과 분석을 시작합니다...")
@@ -569,49 +595,61 @@ for year in test_years:
         performance_summary = {}
         for model_name in model_names:
             
-            daily_weights = {}
+            daily_weights, mspe_scores, qlike_scores = {}, [], []
             daily_covs = model_covariances[model_name]
             
-            # 현재 연도에 해당하는 데이터만 필터링
             yearly_covs = {date: cov for date, cov in daily_covs.items() if date.year == year}
 
-            # 일별 최적 가중치 계산
-            for date, cov_df in tqdm(yearly_covs.items(), desc=f"Optimizing for {model_name} ({year})"):
+            for date, cov_df in tqdm(yearly_covs.items(), desc=f"Analyzing {model_name} ({year})"):
                 if cov_df.empty or cov_df.shape[0] < 2: continue
+                
                 optimal_weights = calculate_gmv_weights(cov_df.values, cov_df.index, limit)
                 daily_weights[date] = optimal_weights
+
+                try:
+                    current_loc = X.index.get_loc(date)
+                    future_start, future_end = current_loc + 1, current_loc + 1 + forecast_horizon
+                    if future_end > len(X): continue
+
+                    future_returns_slice = X.iloc[future_start:future_end]
+                    # forecast_horizon=1일 경우, cov() 계산을 위해 reshape 필요
+                    if forecast_horizon == 1:
+                        # (n_assets,) -> (1, n_assets) 형태로 변경
+                        future_returns_slice = pd.DataFrame(future_returns_slice).T
+                    
+                    realized_cov = future_returns_slice.cov()
+                    
+                    # 1일 데이터는 cov가 NaN으로 나오므로 예외 처리
+                    if realized_cov.isnull().values.any(): continue
+
+                    mspe, qlike = calculate_covariance_loss(realized_cov, cov_df)
+                    if not np.isnan(mspe): mspe_scores.append(mspe)
+                    if not np.isnan(qlike): qlike_scores.append(qlike)
+                except (KeyError, IndexError):
+                    continue
             
             weights_series = pd.DataFrame(daily_weights).T
 
-            # 포트폴리오 수익률 계산
             if weights_series.empty:
                 portfolio_returns = pd.Series(dtype=float)
             else:
-                common_dates = weights_series.index.intersection(X.index).sort_values()
-                common_dates = common_dates[:-1]
-                
+                common_dates = weights_series.index.intersection(X.index).sort_values()[:-1]
                 aligned_weights = weights_series.loc[common_dates]
                 future_returns = X.shift(-1).loc[common_dates]
-                
                 aligned_weights, future_returns = aligned_weights.align(future_returns, join='inner', axis=1)
-
                 portfolio_returns = (aligned_weights * future_returns).sum(axis=1)
 
-            # 성과 지표 계산
             if not portfolio_returns.empty:
-                annualized_return = portfolio_returns.mean() * 252
-                annualized_risk = portfolio_returns.std() * np.sqrt(252)
-                sharpe_ratio = annualized_return / annualized_risk if annualized_risk > 0 else 0
-                
                 performance_summary[model_name] = {
-                    'Annualized Return (%)': annualized_return * 100,
-                    'Annualized Risk (%)': annualized_risk * 100,
-                    'Sharpe Ratio': sharpe_ratio
+                    'Annualized Return (%)': portfolio_returns.mean() * 252 * 100,
+                    'Annualized Risk (%)': portfolio_returns.std() * np.sqrt(252) * 100,
+                    'Sharpe Ratio': (portfolio_returns.mean() * 252) / (portfolio_returns.std() * np.sqrt(252)) if portfolio_returns.std() > 0 else 0,
+                    'MSPE': np.mean(mspe_scores) if mspe_scores else 0,
+                    'QLIKE': np.mean(qlike_scores) if qlike_scores else 0
                 }
             else:
-                 performance_summary[model_name] = {key: 0 for key in ['Annualized Return (%)', 'Annualized Risk (%)', 'Sharpe Ratio']}
+                 performance_summary[model_name] = {key: 0 for key in ['Annualized Return (%)', 'Annualized Risk (%)', 'Sharpe Ratio', 'MSPE', 'QLIKE']}
         
-        # 결과 저장
         results_df = pd.DataFrame(performance_summary).T
         results_df['Gross Exposure'] = limit
         results_df['Year'] = year
@@ -619,12 +657,16 @@ for year in test_years:
 
 print("\n✅ 모든 분석이 완료되었습니다!")
 
-# --- 3. 최종 결과 출력 ---
+# --- 3. 최종 결과 출력 및 CSV 저장 ---
 final_summary_df = pd.concat(all_results)
 final_summary_df = final_summary_df.reset_index().rename(columns={'index': 'Model'})
 
+output_path = 'final_performance_summary_2022_2024.csv'
+final_summary_df.to_csv(output_path, index=False, float_format="%.4f")
+print(f"\n✅ 최종 성과 요약이 '{output_path}' 파일로 저장되었습니다.")
+
 print("\n\n--- 최종 성과 비교 요약 ---")
-print(final_summary_df.set_index(['Year', 'Gross Exposure', 'Model']).to_string(float_format="%.2f"))
+print(final_summary_df.set_index(['Year', 'Gross Exposure', 'Model']).to_string(float_format="%.4f"))
 
 
 #%% --- 4. 최종 결과 시각화 ---
@@ -661,3 +703,6 @@ for metric in metrics_to_plot:
 
 print("\n✅ 모든 시각화가 완료되었습니다.")
 
+output_path = 'final_performance_summary_2022_2024.csv'
+# index=False: 데이터프레임의 인덱스를 파일에 쓰지 않음
+final_summary_df.to_csv(output_path, index=False, float_format="%.4f")
