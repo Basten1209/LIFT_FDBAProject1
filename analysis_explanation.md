@@ -265,28 +265,6 @@ $$
 
 ---
 
-## 3️⃣ Principal Portfolio Analysis (Top Eigenvectors)
-
-**Concept:**  
-Visualizes the top 3 eigenvectors (principal factors) of the average covariance matrix.  
-Each cell in the heatmap represents a factor loading magnitude for each asset.
-
-**What’s desirable:**
-
-| Pattern | Interpretation |
-|----------|----------------|
-| Distinct color blocks by asset groups | Strong sectoral or factor structure |
-| Blurry / uniform colors | Weak or noisy factor structure |
-| Balanced, interpretable loadings | Good multi-factor representation |
-
-**How to read the plot:**
-
-- Y-axis = top 20 assets contributing most to principal factors  
-- X-axis = top 3 factors  
-- Darker color = stronger contribution  
-- Clear clustering across columns implies interpretable risk factors.
-
----
 
 ## 4️⃣ Shrinkage Intensity Comparison (Trace of Σ)
 
