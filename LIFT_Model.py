@@ -7,7 +7,7 @@ from joblib import Parallel, delayed
 
 # CSV 파일을 DataFrame으로 불러옵니다.
 # 'Date' 열을 인덱스로 사용하고, 날짜 형식으로 파싱합니다.
-file_path = 'processed_data_1014.csv'
+file_path = 'data/processed_data_1014.csv'
 try:
     log_return_df = pd.read_csv(file_path, index_col='Date', parse_dates=True)
     print("✅ 데이터 로딩 성공!")

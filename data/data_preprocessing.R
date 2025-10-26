@@ -15,7 +15,7 @@ library(stringr)
 
 # Setup Paths ================================================================
 raw_data_dir <- "data/raw/"
-processed_data_dir <- "data/processed/"
+processed_data_dir <- "data/"
 
 # Create processed directory if it doesn't exist
 if (!dir.exists(processed_data_dir)) {
@@ -245,8 +245,8 @@ tryCatch({
     warning(sprintf("\nCannot write to %s - file may be open in another program.", output_file))
     # Try alternative filename
     alt_file <- file.path(processed_data_dir, 
-                          sprintf("processed_returns_%s.csv", 
-                                  format(Sys.time(), "%Y%m%d_%H%M%S")))
+                          sprintf("processed_data_%s.csv", 
+                                  format(Sys.time(), "%m%d")))
     cat(sprintf("\nAttempting to save to alternative file: %s\n", alt_file))
     write.csv(output_df, alt_file, row.names = FALSE)
     output_file <<- alt_file  # Update output_file in parent scope
